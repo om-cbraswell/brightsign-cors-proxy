@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+body { background: #1a1a2e; color: #0f0; font-family: monospace; font-size: 14px; padding: 15px; margin: 0; overflow-y: auto; }
+h1 { color: #e94560; font-size: 20px; margin: 0 0 10px 0; }
+.ok { color: #0f0; } .fail { color: #f55; } .warn { color: #ff0; } .info { color: #0ff; }
+.response { background: #0d1117; border: 1px solid #333; padding: 8px; margin: 5px 0; border-radius: 4px; max-height: 200px; overflow-y: auto; }
+pre { white-space: pre-wrap; word-wrap: break-word; font-size: 11px; }
+</style>
+</head>
+<body>
+<h1>TB40 Dual Test (Direct + Proxy)</h1>
+<div id="log"></div>
+<script>
+var TB40 = '172.31.11.100';
+var PROXY = 'http://localhost:8888';
+var d = document.getElementById('log');
+
+function ts() { return new Date().toLocaleTimeString(); }
+function log(msg, cls) {
+  var el = document.createElement('div');
+  el.className = cls || '';
+  el.textContent = '['+ts()+'] '+msg;
+  d.appendChild(el);
+  el.scrollIntoView(false);
+}
+function logHTML(html) {
+  var el = document.createElement('div');
+  el.innerHTML = html;
+  d.appendChild(el);
+  el.scrollIntoView(false);
+}
+
+function httpGet(url, timeout) {
+  return new Promise(function(resolve) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.timeout = timeout || 5000;
+    var start = Date.now();
+    xhr.onload = function() { resolve({ok:true, status:xhr.status, body:xhr.responseText, time:Date.now()-start}); };
+    xhr.onerror = function() { resolve({ok:false, error:'blocked', time:Date.now()-start}); };
+    xhr.ontimeout = function() { resolve({ok:false, error:'timeout', time:Date.now()-start}); };
+    xhr.send();
+  });
+}
+
+async function run() {
+  log('Origin: ' + (window.origin || window.location.origin || 'null'), 'info');
+  log('Location: ' + window.location.href, 'info');
+  log('');
+
+  // Test A: Direct to TB40 (websecurity:false should allow this)
+  log('=== TEST A: DIRECT to TB40 (websecurity:false) ===', 'info');
+  var ports = [80, 8080, 3000, 5001, 9000];
+  for (var i = 0; i < ports.length; i++) {
+    var url = 'http://' + TB40 + ':' + ports[i] + '/';
+    var res = await httpGet(url, 5000);
+    if (res.ok) {
+      log('DIRECT :' + ports[i] + ' => HTTP ' + res.status + ' (' + res.body.length + ' bytes, ' + res.time + 'ms)', 'ok');
+      logHTML('<div class="response"><pre>' + res.body.substring(0, 300).replace(/</g, '&lt;') + '</pre></div>');
+    } else {
+      log('DIRECT :' + ports[i] + ' => ' + res.error + ' (' + res.time + 'ms)', 'fail');
+    }
+  }
+
+  // Test B: Via CORS proxy
+  log('');
+  log('=== TEST B: VIA PROXY (localhost:8888) ===', 'info');
+  var proxyTest = await httpGet(PROXY + '/80/');
+  if (proxyTest.ok) {
+    log('PROXY :80 => HTTP ' + proxyTest.status + ' (' + proxyTest.body.length + ' bytes, ' + proxyTest.time + 'ms)', 'ok');
+    logHTML('<div class="response"><pre>' + proxyTest.body.substring(0, 300).replace(/</g, '&lt;') + '</pre></div>');
+    // Scan more via proxy
+    var proxyPorts = [8080, 3000, 5001, 9000, 1515];
+    for (var j = 0; j < proxyPorts.length; j++) {
+      var pres = await httpGet(PROXY + '/' + proxyPorts[j] + '/', 5000);
+      if (pres.ok) {
+        log('PROXY :' + proxyPorts[j] + ' => HTTP ' + pres.status + ' (' + pres.body.length + ' bytes, ' + pres.time + 'ms)', 'ok');
+        logHTML('<div class="response"><pre>' + pres.body.substring(0, 300).replace(/</g, '&lt;') + '</pre></div>');
+      } else {
+        log('PROXY :' + proxyPorts[j] + ' => ' + pres.error + ' (' + pres.time + 'ms)', 'fail');
+      }
+    }
+  } else {
+    log('PROXY not running: ' + proxyTest.error + ' (' + proxyTest.time + 'ms)', 'warn');
+  }
+
+  // Test C: Fetch API
+  log('');
+  log('=== TEST C: fetch() direct ===', 'info');
+  try {
+    var resp = await fetch('http://' + TB40 + ':80/');
+    var body = await resp.text();
+    log('fetch() WORKS! Status: ' + resp.status + ' (' + body.length + ' bytes)', 'ok');
+    logHTML('<div class="response"><pre>' + body.substring(0, 300).replace(/</g, '&lt;') + '</pre></div>');
+  } catch(e) {
+    log('fetch() failed: ' + e.message, 'fail');
+  }
+}
+
+setTimeout(run, 3000);
+</script>
+</body>
+</html>
